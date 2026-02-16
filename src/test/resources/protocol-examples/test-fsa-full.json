@@ -1,0 +1,31 @@
+{
+  "states": {
+    "Service3": {
+      "name": "Service3",
+      "start": true,
+      "transitions": [
+        {
+          "on": "call_service1",
+          "to": "Service3"
+        },
+        {
+          "on": "call_service2",
+          "to": "Service2"
+        }
+      ]
+    },
+    "Service2": {
+      "name": "Service2",
+      "transitions": [
+        {
+          "on": "call_service1",
+          "to": "Service1"
+        }
+      ]
+    },
+    "Service1": {
+      "name": "Service1",
+      "end": true
+    }
+  }
+}

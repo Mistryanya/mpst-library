@@ -1,0 +1,26 @@
+{
+  "states": {
+    "FirstState": {
+      "name": "FirstState",
+      "transitions": [
+        {
+          "on": "go",
+          "to": "SecondState"
+        }
+      ]
+    },
+    "SecondState": {
+      "name": "SecondState",
+      "transitions": [
+        {
+          "on": "stop",
+          "to": "ThirdState"
+        }
+      ]
+    },
+    "ThirdState": {
+      "name": "ThirdState",
+      "end": true
+    }
+  }
+}
