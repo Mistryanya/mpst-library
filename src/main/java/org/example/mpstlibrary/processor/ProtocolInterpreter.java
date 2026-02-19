@@ -95,24 +95,20 @@ public class ProtocolInterpreter {
         }
     }
 
-    public String updateCurrentState(String currentState, String newState) throws InvalidTransitionException {
-        // get current state
+    public String updateCurrentState(String currentState, String serviceCall) throws InvalidTransitionException {
+
         if (checkCurrentState(currentState)) {
-            Transition transition = new Transition("call_"+newState, newState);
+            Transition transition = getValidTransition(serviceCall);
             log.info("DEBUG | TRANSITION: {}", transition.toString());
-            if (validTransition(transition)) {
+            log.info("ATTEMPTING TO UPDATE TO STATE: {}", transition.getTo());
 
-                // update current state
-                log.info("ATTEMPTING TO UPDATE TO STATE: {}", newState);
-                State getState = getStateByName(newState);
-                CurrentState newCurrentState = new CurrentState(getState, CURRENT_STATE_ID);
-                currentStateRepository.save(newCurrentState);
-                log.info("SUCCESSFULLY UPDATED state: {} -> {}", currentState, newCurrentState);
-                return newState;
-
-            }
+            State newState = getStateByName(transition.getTo());
+            CurrentState newCurrentState = new CurrentState(newState, CURRENT_STATE_ID);
+            currentStateRepository.save(newCurrentState);
+            log.info("SUCCESSFULLY UPDATED state: {} -> {}", currentState, newCurrentState);
+            return newState.getName();
         }
-        throw new InvalidTransitionException("Transition state: " + newState + " not found for state: " + currentState);
+        throw new InvalidTransitionException("Transition : call_" + serviceCall + " not found for state: " + currentState);
     }
 
     public State getStateByName(String state){
@@ -132,6 +128,23 @@ public class ProtocolInterpreter {
     public LinkedList<Transition> getAvailableTransitions(){
         State current =  getCurrentState();
         return current.getTransitions();
+    }
+
+    // get transitions for a specific state
+    public LinkedList<Transition> getAvailableTransitions(State state){
+        return state.getTransitions();
+    }
+
+    // get transition for currentState that HAS call_[newState]
+    public Transition getValidTransition(String serviceCalled) throws InvalidTransitionException {
+        LinkedList<Transition> currentStateTransitions = getAvailableTransitions();
+        for (Transition checkTransition : currentStateTransitions){
+            if (checkTransition.getOn().equals("call_" + serviceCalled)){
+                return checkTransition;
+            }
+        }
+        throw new InvalidTransitionException("Cannot find valid transition for ["+getCurrentStateString()+"] " +
+                "-> "+ serviceCalled);
     }
 
     // is valid transition
