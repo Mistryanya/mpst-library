@@ -19,7 +19,7 @@ public class ProtocolInitializer {
     @Autowired
     private final ProtocolLoader protocolLoader;
 
-    @Value("protocol-examples/example1.json")
+    @Value("${protocolPath:protocol-examples/banking_protocol.json}")
     private String protocolPath;
 
     public final static String PROTOCOL_DEF_ID = "default";
@@ -30,8 +30,7 @@ public class ProtocolInitializer {
             log.info("Loading protocol definition from: {}", protocolPath);
 
             // load from mpst-library path
-            String path = "/protocol-examples/example1.json";
-            protocolLoader.loadAndSaveProtocol(path, PROTOCOL_DEF_ID);
+            protocolLoader.loadAndSaveProtocol(protocolPath, PROTOCOL_DEF_ID);
             log.info("Protocol 'default' loaded successfully.");
 
         } catch (IOException e) {

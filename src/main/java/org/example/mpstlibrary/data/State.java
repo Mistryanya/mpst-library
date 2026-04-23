@@ -7,7 +7,6 @@ import java.util.LinkedList;
 
 @Data
 public class State implements Serializable {
-
     private Boolean start = false;
     private Boolean end = false;
     private LinkedList<Transition> transitions;

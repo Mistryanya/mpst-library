@@ -1,0 +1,192 @@
+{
+  "states": [
+    {
+      "name": "S0",
+      "start": true,
+      "transitions": [
+        { "from": "user-service", "on": "login", "to": "S1", "workflow": "login_workflow"},
+        { "from": "user-service", "on": "addNewUser", "to": "S1", "workflow": "newUser_workflow"},
+        { "from": "user-service", "on": "shutdown", "to": "S3", "workflow": "shutdown_workflow"}
+      ]
+    },
+    {
+      "name": "S1",
+      "transitions": [
+        { "from": "bank-service", "on": "getAllAccounts", "to": "S2" , "workflow": "getAllAccounts_workflow", "rollbackOnFailure": false},
+        { "from": "bank-service", "on": "accountDetails", "to": "S3" , "workflow": "shutdown_workflow"},
+        { "from": "user-service", "on": "logout", "to": "S0"}
+      ]
+    },
+    {
+      "name": "S2",
+      "transitions": [
+        { "from": "payment-gateway-service", "on": "depositMoney", "to": "S1", "workflow": "depositMoney_makePayment_workflow" },
+        { "from": "payment-gateway-service", "on": "makePayment", "to": "S1", "workflow": "depositMoney_makePayment_workflow "}
+      ]
+    },
+    {
+      "name": "S3",
+      "end": true
+    }
+  ],
+
+  "workflows":  [
+    { "name": "login_workflow",
+      "description": "Sign in a user [user-service --> auth-service] ",
+      "owner": "user-service",
+      "states": [
+        {
+          "name": "W0",
+          "start": true,
+          "transitions": [
+            {"from": "user-service", "on": "login", "to": "W1"}
+          ]
+        },
+        {
+          "name": "W1",
+          "start": true,
+          "transitions": [
+            {"from": "authorisation-service", "on": "login", "to": "W_end"}
+          ]
+        },
+        {
+          "name": "W_end",
+          "end": true
+        }
+      ]
+    },
+    { "name": "newUser_workflow",
+      "description": "Create a new user [user-service --> auth-service] ",
+      "owner": "user-service",
+      "states": [
+        {
+          "name": "W0",
+          "start": true,
+          "transitions": [
+            {"from": "user-service", "on": "createNewUser", "to": "W1"}
+          ]
+        },
+        {
+          "name": "W1",
+          "start": true,
+          "transitions": [
+            {"from": "authorisation-service", "on": "createNewUser", "to": "W_end"}
+          ]
+        },
+        {
+          "name": "W_end",
+          "end": true
+        }
+      ]
+    },
+    { "name": "shutdown_workflow",
+      "description": "Shutdown [user-service --> ALL SERVICES] ",
+      "owner": "user-service",
+      "states": [
+        {
+          "name": "W0",
+          "start": true,
+          "transitions": [
+            {"from": "user-service", "on": "shutdown", "to": "W1"}
+          ]
+        },
+        {
+          "name": "W1",
+          "transitions": [
+            {"from": "user-service", "on": "shutdown", "to": "W2"}
+          ]
+        },
+        {
+          "name": "W2",
+          "transitions": [
+            {"from": "user-service", "on": "shutdown", "to": "W3"}
+          ]
+        },
+        {
+          "name": "W3",
+          "transitions": [
+            {"from": "user-service", "on": "shutdown", "to": "W4"}
+          ]
+        },
+        {
+          "name": "W4",
+          "start": true,
+          "transitions": [
+            {"from": "user-service", "on": "shutdown", "to": "W_end"}
+          ]
+        },
+
+        {
+          "name": "W_end",
+          "end": true
+        }
+      ]
+    },
+    { "name": "depositMoney_makePayment_workflow",
+      "description": "Deposit money OR Make Payment (same workflow) [payment-gateway-service --> bank-service] ",
+      "owner": "payment-gateway-service",
+      "states": [
+        {
+          "name": "W0",
+          "start": true,
+          "transitions": [
+            {"from": "payment-gateway-service", "on": "validateToken", "to": "W1"}
+          ]
+        },
+        {
+          "name": "W1",
+          "transitions": [
+            {"from": "payment-gateway-service", "on": "updateBalance", "to": "W2"}
+          ]
+        },
+        {
+          "name": "W2",
+          "transitions": [
+            {"from": "payment-gateway-service", "on": "accountDetails", "to": "W_end"}
+          ]
+        },
+        {
+          "name": "W_end",
+          "end": true
+        }
+      ]
+    },
+    { "name": "getAllAccounts_workflow",
+      "description": "Get All Accounts Workflow [bank-service --> authorisation-service] ",
+      "owner": "bank-service",
+      "states": [
+        {
+          "name": "W0",
+          "start": true,
+          "transitions": [
+            {"from": "bank-service", "on": "validateToken", "to": "W1"}
+          ]
+        },
+        {
+          "name": "W1",
+          "start": true,
+          "transitions": [
+            {"from": "authorisation-service", "on": "validateToken", "to": "W2"}
+          ]
+        },
+        {
+          "name": "W2",
+          "transitions": [
+            {"from": "bank-service", "on": "getUserFromToken", "to": "W3"}
+          ]
+        },
+        {
+          "name": "W3",
+          "transitions": [
+            {"from": "authorisation-service", "on": "getUserFromToken", "to": "W_end"}
+          ]
+        },
+        {
+          "name": "W_end",
+          "end": true
+        }
+      ]
+    }
+  ]
+
+}

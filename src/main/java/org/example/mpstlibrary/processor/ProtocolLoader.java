@@ -23,12 +23,6 @@ public class ProtocolLoader {
     ProtocolRepository protocolRepository;
 
     @Autowired
-    ProtocolInterpreter protocolInterpreter;
-
-    @Autowired
-    private ObjectMapper objectMapper;
-
-    @Autowired
     CurrentStateRepository currentStateRepository;
 
     // method to load and save the protocol
@@ -41,33 +35,22 @@ public class ProtocolLoader {
             }
 
             // Deserialize JSON into Protocol
-            Protocol protocol = objectMapper.readValue(inputStream, Protocol.class);
+            ObjectMapper mapper = new ObjectMapper();
+            Protocol protocol = mapper.readValue(inputStream, Protocol.class);
             protocol.setId(protocolId);
 
             log.info("Protocol loaded RAW: {}", protocol.toString());
 
-            // validate protocol and THEN save it
-            if (protocolInterpreter.validateProtocol(protocol)){
-                log.info("Validated protocol");
-
-                // Save protocol via repository
-                // set current state
-                for (State state: protocol.getStates()) {
-                    if (state.getStart()) {
-                        CurrentState startState = new CurrentState(state, "current");
-                        currentStateRepository.save(startState);
-                        log.info("CURRENT STATE SAVED: {}", startState);
-                    }
+            // Save protocol via repository
+            // set current state
+            for (State state: protocol.getStates()) {
+                if (state.getStart()) {
+                    CurrentState startState = new CurrentState(state, "current_state");
+                    currentStateRepository.save(startState);
+                    log.info("CURRENT STATE SAVED: {}", startState);
                 }
-                protocolRepository.save(protocol);
-
-            } else{
-                throw new InvalidProtocolException("Invalid Protocol - check logs for more information");
             }
+            protocolRepository.save(protocol);
         }
-    }
-
-    public Protocol getProtocol(String protocolId) {
-        return protocolRepository.findById(protocolId).orElse(null);
     }
 }

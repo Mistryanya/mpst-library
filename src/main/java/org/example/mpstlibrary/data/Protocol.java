@@ -5,8 +5,6 @@ import java.util.LinkedList;
 import java.util.Map;
 
 import lombok.Data;
-import lombok.Getter;
-import lombok.Setter;
 import org.springframework.data.redis.core.RedisHash;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -21,7 +19,11 @@ public class Protocol implements Serializable {
     @JsonProperty("states")
     private LinkedList<State> states;
 
+    @JsonProperty("workflows")
+    private LinkedList<Workflow> workflows;
+
     // Default constructor is required by Redis/Jackson
     public Protocol() {
     }
 }
+
