@@ -2,7 +2,6 @@ package org.example.mpstlibrary.data;
 
 import java.io.Serializable;
 import java.util.LinkedList;
-import java.util.Map;
 
 import lombok.Data;
 import org.springframework.data.redis.core.RedisHash;

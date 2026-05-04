@@ -1,6 +1,5 @@
 package org.example.mpstlibrary.processor;
 
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.example.mpstlibrary.data.*;
 import org.example.mpstlibrary.exception.CurrentStateNotFoundException;
@@ -12,11 +11,12 @@ import org.example.mpstlibrary.repo.CurrentWorkflowRepository;
 import org.example.mpstlibrary.repo.ProtocolRepository;
 import org.example.mpstlibrary.session.WorkflowSessionService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedList;
-import java.util.List;
-import java.util.UUID;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.example.mpstlibrary.processor.ProtocolInitializer.PROTOCOL_DEF_ID;
@@ -41,26 +41,15 @@ public class ProtocolInterpreter {
     public final static String CURRENT_WORKFLOW_ID = "workflow";
     public final static String CURRENT_WORKFLOW_STATE_ID = "workflow_state";
 
-    /*
-    TODO create sessions
-    1. create new session for workflow
-    2. when request is made assign to session context ONLY IF WORKFLOW IS PRESENT
-    (OR is request fails?) -- how to do this inside a monitor that intercepts requests?
-    3. If request INSIDE of workflow fails then resent state back to initial state store inside session context
-    to before workflow was called so that it can be called again
-    3. will it accomodate multiple sessions?? and can my redis store actually do this (is this a limitation?)
+    // ---------- Reads ----------
 
-     */
-
-
-    // get current state
-    public State getCurrentState(){
-        if (getCurrentWorkflow() != null){
-            if (currentStateRepository.findById(CURRENT_WORKFLOW_STATE_ID).isPresent()){
+    public State getCurrentState() {
+        if (getCurrentWorkflow() != null) {
+            if (currentStateRepository.findById(CURRENT_WORKFLOW_STATE_ID).isPresent()) {
                 State current = currentStateRepository.findById(CURRENT_WORKFLOW_STATE_ID).get().getState();
                 log.info("CURRENT WORKFLOW STATE: {}", current);
                 return current;
-            } else{
+            } else {
                 log.info("Setting workflow current state");
                 return null;
             }
@@ -75,226 +64,361 @@ public class ProtocolInterpreter {
         }
     }
 
-    // get current workflow
-    public Workflow getCurrentWorkflow(){
-        if (currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).isPresent()){
+    public Workflow getCurrentWorkflow() {
+        if (currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).isPresent()) {
             Workflow currentWorkflow = currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).get().getWorkflow();
             log.info("CURRENT WORKFLOW: {}", currentWorkflow.getName());
             return currentWorkflow;
-        } else{
+        } else {
             log.info("No Workflow saved for this transition");
             return null;
         }
     }
 
-    private CurrentState createNewCurrentState(State state, String id){
-        return new CurrentState(state, id);
-    }
-
-    private CurrentWorkflow createNewCurrentWorkflow(Workflow workflow, String id){
-        return new CurrentWorkflow(workflow, id);
-    }
-
-    public LinkedList<String> getCurrentStateServices(){
+    public LinkedList<String> getCurrentStateServices() {
         LinkedList<Transition> transitions = getCurrentState().getTransitions();
         if (transitions != null) {
-            LinkedList<String> services = transitions.stream()
+            return transitions.stream()
                     .map(Transition::getFrom)
                     .collect(Collectors.toCollection(LinkedList::new));
-            return services;
-        } else {
-            return null;
         }
-
+        return null;
     }
 
-    public String getCurrentStateString(){
+    public String getCurrentStateString() {
         return getCurrentState().name;
-
     }
 
+    public boolean checkCurrentStateHasTransition(String service, String eventAction)
+            throws InvalidTransitionException {
+        LinkedList<Transition> transitions = getCurrentState().getTransitions();
+        if (transitions == null) {
+            throw new InvalidTransitionException("No transitions on state [" + getCurrentStateString() + "]");
+        }
+        boolean found = transitions.stream()
+                .anyMatch(t -> t.getFrom().equals(service) && t.getOn().equals(eventAction));
+        if (!found) {
+            throw new StateMismatchException(
+                    "INVALID CALL | " + service + " -> " + eventAction
+                            + " is NOT a transition at [" + getCurrentStateString() + "]");
+        }
+        return true;
+    }
 
-    public boolean checkCurrentStateHasService(String service) throws InvalidTransitionException {
-        log.info("CHECKING THAT: [{}] is part of [{}]", service, getCurrentStateString());
-        LinkedList<String> currentStateServices = getCurrentStateServices();
+    // ---------- PLAN (no Redis writes) ----------
 
-        if (currentStateServices != null) {
-            if (currentStateServices.contains(service)) {
-                log.info("Service calling is valid");
-                return true;
-            } else {
-                throw new StateMismatchException("INVALID SERVICE CALL | Service calling [" + service + "] is NOT in current state [" + getCurrentStateString() + "] in protocol");
-            }
+    /**
+     * Validates the transition and returns the intended next state WITHOUT persisting.
+     * Call commitTransition() after the request succeeds.
+     */
+    public TransitionPlan planTransition(String currentService,
+                                         String eventAction)
+            throws InvalidTransitionException {
+
+        Workflow workflow = getCurrentWorkflow();
+        State state = getCurrentState();
+
+        if (workflow != null && state == null) {
+            return planWorkflowStart(currentService, eventAction, workflow);
+        } else if (workflow != null && state.getEnd()) {
+            return planWorkflowEnd(currentService, eventAction);
+        } else if (state != null && state.getEnd()) {
+            throw new EndOfProtocolException("PROTOCOL HAS ENDED - NO"+
+                    " MORE SERVICE CALLS ACCEPTED");
+        } else if (workflow != null) {
+            return planWorkflowTransition(currentService, eventAction);
+        } else if (checkCurrentStateHasTransition(currentService,
+                eventAction)) {
+            return planProtocolTransition(currentService, eventAction);
         } else {
-            throw new InvalidTransitionException("ERROR | No Transitions Found");
+            throw new InvalidTransitionException(
+                    "Transition : " + eventAction +
+                            " not found for state: " + currentService);
         }
     }
 
-    public String updateCurrentState(String currentService, String eventAction) throws InvalidTransitionException {
-
-        // validate transition THEN UPDATE state
-
-        // workflow is active and we are at the start of it
-        if (getCurrentWorkflow() != null && getCurrentState() == null) {
-            return handleWorkflowStart(currentService, eventAction);
-        }
-        // workflow is active and we have reached the end of it
-        else if (getCurrentWorkflow() != null && getCurrentState().getEnd()) {
-            return handleWorkflowEnd(currentService, eventAction);
-        }
-        // throw exception if the protocol has ended to let the application know
-        // TODO ask supervisor what to do after this step?
-        else if (getCurrentState().getEnd()) {
-            throw new EndOfProtocolException("PROTOCOL HAS ENDED - NO MORE SERVICE CALLS ACCEPTED");
-        }
-        // workflow is active and we are in the middle of it
-        else if (getCurrentWorkflow() != null) {
-            return handleWorkflowTransition(currentService, eventAction);
-        }
-        // no workflow, normal protocol transition
-        else if (checkCurrentStateHasService(currentService)) {
-            return handleProtocolTransition(currentService, eventAction);
-        } else {
-            throw new InvalidTransitionException("Transition : " + eventAction + " not found for state: " + currentService);
-        }
-    }
-
-    private String handleWorkflowStart(String currentService, String eventAction) throws InvalidTransitionException {
-        for (State state : getCurrentWorkflow().getStates()) {
+    private TransitionPlan planWorkflowStart(String currentService, String eventAction, Workflow workflow)
+            throws InvalidTransitionException {
+        for (State state : workflow.getStates()) {
             if (state.getStart()) {
-                // UPDATE current state to next current state
-                // UPDATE workflow state to next workflow state
                 Transition transition = getValidTransition(eventAction, currentService);
-                log.info("DEBUG | TRANSITION: {}", transition.toString());
+                log.info("PLAN | WORKFLOW_START transition: {}", transition);
 
-                State newState = getStateByName(transition.getTo());
-                currentStateRepository.save(createNewCurrentState(newState, CURRENT_STATE_ID));
-                log.info("SUCCESSFULLY UPDATED state: {} -> {}", currentService, newState);
-
-                currentStateRepository.save(createNewCurrentState(state, CURRENT_WORKFLOW_STATE_ID));
-                log.info("ATTEMPTING TO UPDATE TO STATE: {}", transition.getTo());
-
-                return state.getName();
+                State nextWorkflowState = getStateByName(transition.getTo());
+                return TransitionPlan.builder()
+                        .transition(transition)
+                        .nextState(nextWorkflowState)
+                        .workflowStartState(state)
+                        .insideWorkflow(true)
+                        .build();
             }
         }
-        throw new InvalidTransitionException("No start state found in workflow: " + getCurrentWorkflow().getName());
+        throw new InvalidTransitionException("No start state found in workflow: " + workflow.getName());
     }
 
-    private String handleWorkflowEnd(String currentService, String eventAction) throws InvalidTransitionException {
-        currentWorkflowRepository.delete(createNewCurrentWorkflow(getCurrentWorkflow(), CURRENT_WORKFLOW_ID));
-        currentStateRepository.delete(createNewCurrentState(getCurrentState(), CURRENT_WORKFLOW_STATE_ID));
+    private TransitionPlan planWorkflowEnd(String currentService, String eventAction)
+            throws InvalidTransitionException {
 
-        log.info("COMPLETED WORKFLOW | Resuming protocol at state: {}", getCurrentState().getName());
+        State protocolState = currentStateRepository.findById(CURRENT_STATE_ID)
+                .map(CurrentState::getState)
+                .orElseThrow(() -> new CurrentStateNotFoundException(
+                        "No protocol state found when ending workflow"));
 
-        // Now re-process the triggering event against the restored protocol state
-        return handleProtocolTransition(currentService, eventAction);
+        Transition transition = findTransition(protocolState, eventAction, currentService);
+        log.info("PLAN | WORKFLOW_END resolving to PROTOCOL transition: {}", transition);
+
+        // Does this transition also START a new workflow?
+        if (transition.getWorkflow() != null) {
+            Workflow workflowToStart = findWorkflowByName(transition.getWorkflow());
+            if (workflowToStart != null) {
+                State workflowStartState = workflowToStart.getStates().stream()
+                        .filter(State::getStart)
+                        .findFirst()
+                        .orElseThrow(() -> new InvalidTransitionException(
+                                "Workflow " + workflowToStart.getName() + " has no start state"));
+
+                State nextProtocolState = getStateByName(transition.getTo());
+
+                log.info("PLAN | WORKFLOW_END also STARTS workflow: {}", transition.getWorkflow());
+
+                return TransitionPlan.builder()
+                        .transition(transition)
+                        .nextState(workflowStartState)        // caller sees the new workflow's start
+                        .workflowToStart(workflowToStart)
+                        .workflowStartState(workflowStartState)
+                        .nextProtocolState(nextProtocolState)
+                        .endsWorkflow(true)                   // tear down old workflow
+                        .startsWorkflow(true)                 // start new workflow
+                        .build();
+            }
+        }
+
+        // Plain end — just return to protocol state
+        State nextState = getStateByName(transition.getTo());
+        return TransitionPlan.builder()
+                .transition(transition)
+                .nextState(nextState)
+                .endsWorkflow(true)
+                .build();
     }
 
-    private String handleWorkflowTransition(String currentService, String eventAction) throws InvalidTransitionException {
+    /**
+     * Like getValidTransition but against a specific state, not getCurrentState().
+     * Needed during workflow-end planning where the "current" reader would still
+     * point at the workflow's terminal state.
+     */
+    private Transition findTransition(State state, String eventAction, String fromService)
+            throws InvalidTransitionException {
+        LinkedList<Transition> transitions = state.getTransitions();
+        if (transitions == null) {
+            throw new InvalidTransitionException(
+                    "No transitions on state [" + state.getName() + "]");
+        }
+        for (Transition t : transitions) {
+            if (t.getOn().equals(eventAction) && t.getFrom().equals(fromService)) {
+                return t;
+            }
+        }
+        throw new InvalidTransitionException("Cannot find valid transition for ["
+                + state.getName() + "] " + fromService + " -> " + eventAction);
+    }
+
+    private TransitionPlan planWorkflowTransition(String currentService, String eventAction)
+            throws InvalidTransitionException {
         Transition transition = getValidTransition(eventAction, currentService);
-        log.info("DEBUG | TRANSITION: {}", transition.toString());
-        log.info("ATTEMPTING TO UPDATE TO STATE: {}", transition.getTo());
+        log.info("PLAN | WORKFLOW transition: {}", transition);
 
-        State newState = getStateByName(transition.getTo());
-        currentStateRepository.save(createNewCurrentState(newState, CURRENT_WORKFLOW_STATE_ID));
-        log.info("SUCCESSFULLY UPDATED state: {} -> {}", currentService, newState);
-        return newState.getName();
+        State nextState = getStateByName(transition.getTo());
+
+        boolean reachesEnd = Boolean.TRUE.equals(nextState.getEnd());
+
+        return TransitionPlan.builder()
+                .transition(transition)
+                .nextState(nextState)
+                .insideWorkflow(true)
+                .endsWorkflow(reachesEnd)   // ← teardown on terminal state
+                .build();
     }
 
-    private String handleProtocolTransition(String currentService, String eventAction) throws InvalidTransitionException {
+    private TransitionPlan planProtocolTransition(String currentService, String eventAction)
+            throws InvalidTransitionException {
         Transition transition = getValidTransition(eventAction, currentService);
-        log.info("DEBUG | TRANSITION: {}", transition.toString());
+        log.info("PLAN | PROTOCOL transition: {}", transition);
 
+        // Does this transition start a workflow?
         if (transition.getWorkflow() != null && getCurrentState() != null) {
-            String workflowStartState = tryStartWorkflow(transition.getWorkflow(), transition, currentService);
+            Workflow workflowToStart = findWorkflowByName(transition.getWorkflow());
+            if (workflowToStart != null) {
+                State workflowStartState = workflowToStart.getStates().stream()
+                        .filter(State::getStart)
+                        .findFirst()
+                        .orElseThrow(() -> new InvalidTransitionException(
+                                "Workflow " + workflowToStart.getName() + " has no start state"));
 
-            if (workflowStartState != null) {
-                log.info("WORKFLOW STARTED | Workflow: {} | Start state: {}", transition.getWorkflow(), workflowStartState);
-                return workflowStartState;
+                State nextProtocolState = getStateByName(transition.getTo());
+
+                return TransitionPlan.builder()
+                        .transition(transition)
+                        .nextState(workflowStartState)            // what the caller 'sees' as next
+                        .workflowToStart(workflowToStart)
+                        .workflowStartState(workflowStartState)
+                        .nextProtocolState(nextProtocolState)
+                        .startsWorkflow(true)
+                        .build();
             }
         }
 
-        log.info("ATTEMPTING TO UPDATE TO STATE: {}", transition.getTo());
-        State newState = getStateByName(transition.getTo());
-        currentStateRepository.save(createNewCurrentState(newState, CURRENT_STATE_ID));
-        log.info("SUCCESSFULLY UPDATED state: {} -> {}", currentService, newState);
-        return newState.getName();
+        State nextState = getStateByName(transition.getTo());
+        return TransitionPlan.builder()
+                .transition(transition)
+                .nextState(nextState)
+                .build();
     }
 
-    // start workflow AND start workflow session
-    private String tryStartWorkflow(String workflowName, Transition transition, String currentService) {
+    private Workflow findWorkflowByName(String workflowName) {
         if (protocolRepository.findById(PROTOCOL_DEF_ID).isEmpty()) return null;
-
         for (Workflow workflow : protocolRepository.findById(PROTOCOL_DEF_ID).get().getWorkflows()) {
             if (workflow.getName().equals(workflowName)) {
-                // create session BEFORE setting workflow
-                // save snapshot for new session
-                Session newSession  = workflowSessionService.onWorkflowStart(UUID.randomUUID().toString(), workflowName ,workflow, transition.isRollbackOnFailure());
-                log.info("New session started : {}", newSession.getSessionId());
-
-                // Save the NEXT protocol state BEFORE starting the workflow
-                State nextProtocolState = getStateByName(transition.getTo());
-                currentStateRepository.save(createNewCurrentState(nextProtocolState, CURRENT_STATE_ID));
-                log.info("PRE-WORKFLOW | Updating protocol state: {} -> {}", currentService, nextProtocolState.getName());
-
-                currentWorkflowRepository.save(createNewCurrentWorkflow(workflow, CURRENT_WORKFLOW_ID));
-                log.info("STARTING WORKFLOW: {}", workflowName);
-
-                for (State state : workflow.getStates()) {
-                    if (state.getStart()) {
-                        currentStateRepository.save(createNewCurrentState(state, CURRENT_WORKFLOW_STATE_ID));
-                        log.info("WORKFLOW START STATE: {}", state.getName());
-                        return state.getName();
-                    }
-                }
+                return workflow;
             }
         }
         return null;
     }
 
-    public State getStateByName(String state){
-        if (currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).isPresent()){
-            for (State compareState: currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).get().getWorkflow().getStates()){
-                if (compareState.getName().equals(state)){
+    // ---------- COMMIT (writes to Redis after response) ----------
+
+    /**
+     * Applies a previously-planned transition to Redis. Call after request success.
+     */
+    public void commitTransition(TransitionPlan plan) {
+        log.info("COMMIT routing: startsWorkflow={}, endsWorkflow={}, insideWorkflow={}",
+                plan.isStartsWorkflow(), plan.isEndsWorkflow(), plan.isInsideWorkflow());
+
+        if (plan.isEndsWorkflow() && plan.isStartsWorkflow()) {
+            commitWorkflowEndTeardown();
+            commitWorkflowStart(plan);
+            log.info("COMMITTED workflow-end-and-restart into: {}", plan.getNextState().getName());
+            return;
+        }
+
+        if (plan.isStartsWorkflow()) {
+            commitWorkflowStart(plan);
+            return;
+        }
+
+        // NEW: workflow-internal transition that lands on terminal state
+        if (plan.isInsideWorkflow() && plan.isEndsWorkflow()) {
+            commitWorkflowEndTeardown();
+            log.info("COMMIT | Workflow reached terminal state, torn down");
+            return;
+        }
+
+        // Old-style end (planWorkflowEnd resolved against protocol state)
+        if (plan.isEndsWorkflow()) {
+            commitWorkflowEnd(plan);
+            return;
+        }
+
+        if (plan.isInsideWorkflow()) {
+            currentStateRepository.save(new CurrentState(plan.getNextState(), CURRENT_WORKFLOW_STATE_ID));
+            log.info("COMMITTED workflow transition to: {}", plan.getNextState().getName());
+        } else {
+            currentStateRepository.save(new CurrentState(plan.getNextState(), CURRENT_STATE_ID));
+            log.info("COMMITTED protocol transition to: {}", plan.getNextState().getName());
+        }
+    }
+
+    // Extracted so it can be reused by the combined case
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
+
+    private void commitWorkflowEndTeardown() {
+        Workflow current = getCurrentWorkflow();
+        if (current != null) {
+            currentWorkflowRepository.deleteById(CURRENT_WORKFLOW_ID);
+        }
+        currentStateRepository.deleteById(CURRENT_WORKFLOW_STATE_ID);
+        log.info("COMMIT | Workflow ended, cleared workflow-scoped state");
+
+        // Read back immediately to verify
+        boolean stillThere = currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).isPresent();
+
+        boolean stillThere2 = currentWorkflowRepository.findById(CURRENT_WORKFLOW_STATE_ID).isPresent();
+        log.info("COMMIT | Workflow ended, cleared workflow-scoped state. " +
+                "Verify still present workflow and workflow state: {} {}", stillThere, stillThere2);
+
+        // Try every plausible key name
+        Long deleted1 = stringRedisTemplate.delete("currentWorkflow:" + CURRENT_WORKFLOW_ID) ? 1L : 0L;
+        Long deleted2 = stringRedisTemplate.delete("currentState:" + CURRENT_WORKFLOW_STATE_ID) ? 1L : 0L;
+        log.info("Direct delete attempts: workflow={}, state={}", deleted1, deleted2);
+
+        Set<String> keysAfter = stringRedisTemplate.keys("*");
+        log.info("KEYS AFTER delete: {}", keysAfter);
+    }
+
+    private void commitWorkflowEnd(TransitionPlan plan) {
+        commitWorkflowEndTeardown();
+        currentStateRepository.save(new CurrentState(plan.getNextState(), CURRENT_STATE_ID));
+        log.info("COMMIT | Resumed protocol at state: {}", plan.getNextState().getName());
+    }
+
+    private void commitWorkflowStart(TransitionPlan plan) {
+        // Save the NEXT protocol state BEFORE the workflow (so when the workflow ends,
+        // we resume from the correct protocol state).
+        currentStateRepository.save(new CurrentState(plan.getNextProtocolState(), CURRENT_STATE_ID));
+        log.info("COMMIT | PRE-WORKFLOW protocol state: {}", plan.getNextProtocolState().getName());
+
+        CurrentWorkflow cw = new CurrentWorkflow(
+                CURRENT_WORKFLOW_ID,
+                plan.getSessionId(),
+                plan.getWorkflowToStart()
+        );
+        currentWorkflowRepository.save(cw);
+        log.info("COMMIT | STARTING WORKFLOW: {} (session: {})",
+                plan.getWorkflowToStart().getName(), plan.getSessionId());
+
+        currentStateRepository.save(new CurrentState(plan.getWorkflowStartState(), CURRENT_WORKFLOW_STATE_ID));
+        log.info("COMMIT | WORKFLOW START STATE: {}", plan.getWorkflowStartState().getName());
+    }
+
+
+    public State getStateByName(String state) {
+        if (currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).isPresent()) {
+            for (State compareState : currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).get().getWorkflow().getStates()) {
+                if (compareState.getName().equals(state)) {
                     return compareState;
                 }
             }
         }
 
-        if (protocolRepository.findById(PROTOCOL_DEF_ID).isPresent()){
-            for (State compareState: protocolRepository.findById(PROTOCOL_DEF_ID).get().getStates()){
-                if (compareState.getName().equals(state)){
+        if (protocolRepository.findById(PROTOCOL_DEF_ID).isPresent()) {
+            for (State compareState : protocolRepository.findById(PROTOCOL_DEF_ID).get().getStates()) {
+                if (compareState.getName().equals(state)) {
                     return compareState;
                 }
             }
         }
 
         throw new StateMismatchException("transition State could not be found");
-
     }
 
-    // get available transitions
-    public LinkedList<Transition> getAvailableTransitions(){
-        State current =  getCurrentState();
-        return current.getTransitions();
+    public LinkedList<Transition> getAvailableTransitions() {
+        return getCurrentState().getTransitions();
     }
 
-    // get transitions for a specific state
-    public LinkedList<Transition> getAvailableTransitions(State state){
+    public LinkedList<Transition> getAvailableTransitions(State state) {
         return state.getTransitions();
     }
 
-    //TODO fix this method
-    // get transition for currentState that HAS call_[newService]
     public Transition getValidTransition(String eventAction, String fromService) throws InvalidTransitionException {
         LinkedList<Transition> currentStateTransitions = getAvailableTransitions();
-        for (Transition checkTransition : currentStateTransitions){
-            if (checkTransition.getOn().equals(eventAction) && checkTransition.getFrom().equals(fromService)){
+        for (Transition checkTransition : currentStateTransitions) {
+            if (checkTransition.getOn().equals(eventAction) && checkTransition.getFrom().equals(fromService)) {
                 return checkTransition;
             }
         }
-        throw new InvalidTransitionException("Cannot find valid transition for ["+getCurrentStateString()+"] " +
-              fromService +  "-> "+ eventAction);
+        throw new InvalidTransitionException("Cannot find valid transition for [" + getCurrentStateString() + "] "
+                + fromService + "-> " + eventAction);
     }
-
 }

@@ -13,10 +13,11 @@ import java.util.UUID;
 @AllArgsConstructor
 public class CurrentWorkflow {
     private String id;
+    private String sessionId;
     private Workflow workflow;
 //    private String sessionId;
 
-    public CurrentWorkflow(Workflow workflow, String id /*, String sessionId */){
+    public CurrentWorkflow(Workflow workflow, String id){
         this.workflow = workflow;
         this.id = id;
 

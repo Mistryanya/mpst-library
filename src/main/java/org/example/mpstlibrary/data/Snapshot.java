@@ -1,4 +1,4 @@
-package org.example.mpstlibrary.session;
+package org.example.mpstlibrary.data;
 
 
 import lombok.AllArgsConstructor;

@@ -2,15 +2,26 @@ package org.example.mpstlibrary.monitor;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.mpstlibrary.data.CurrentState;
+import org.example.mpstlibrary.data.Session;
+import org.example.mpstlibrary.data.TransitionPlan;
+import org.example.mpstlibrary.processor.ProtocolInterpreter;
 import org.example.mpstlibrary.processor.ProtocolManagerService;
+import org.example.mpstlibrary.repo.CurrentStateRepository;
+import org.example.mpstlibrary.repo.CurrentWorkflowRepository;
 import org.example.mpstlibrary.session.RollbackOnFailureFilter;
 import org.example.mpstlibrary.session.WorkflowSessionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.integration.redis.util.RedisLockRegistry;
 import org.springframework.web.reactive.function.client.*;
 import reactor.core.publisher.Mono;
+
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 
 
 @Configuration
@@ -18,8 +29,8 @@ import reactor.core.publisher.Mono;
 @Slf4j
 public class WebClientMonitor {
 
-    @Autowired
-    private final ProtocolManagerService managerService;
+//    @Autowired
+//    private final ProtocolManagerService managerService;
 
     // The name of the current service (e.g., "Service2" or "Service3")
     @Value("${spring.application.name:#{null}}")
@@ -27,11 +38,23 @@ public class WebClientMonitor {
 
     private final RollbackOnFailureFilter rollbackOnFailureFilter;
 
+    private final ProtocolInterpreter interpreter;
+    private final WorkflowSessionService sessionService;
+    private final CurrentWorkflowRepository currentWorkflowRepository;
+
+    @Autowired
+    private final ProtocolManagerService managerService;
+
+    private final RedisLockRegistry lockRegistry;
+    private final CurrentStateRepository currentStateRepository;
+
+
     @Bean
     public WebClient monitoredWebClient() {
         return WebClient.builder()
                 .filter(this::enforceProtocolTransition)
                 .filter(rollbackOnFailureFilter.filter())
+                .defaultHeader("X-Calling-Service", serviceName)
                 .build();
     }
 
@@ -40,58 +63,167 @@ public class WebClientMonitor {
      * This acts as the external verification step.
      */
     private Mono<ClientResponse> enforceProtocolTransition(
-            ClientRequest request,
-            ExchangeFunction next) {
-        return Mono.deferContextual(ctx -> {;
+            ClientRequest request, ExchangeFunction next) {
 
-            String url = request.url().toString();
+        String url = request.url().toString();
 
-            // todo add sessions
-            // check if session present
+        String fromService = (serviceName == null)
+                ? extractFromServiceFromUrl(url)
+                : serviceName;
 
-            // Extract Target Service (The "to" state/event)
-            String fromService;
-            if (serviceName == null ) {
-                fromService = extractFromServiceFromUrl(url);
-            } else {
-                fromService = serviceName;
+        String[] parts = url.split("/");
+        String lastPart = parts[parts.length - 1];
+        String eventAction = lastPart.matches("[0-9]+")
+                ? parts[parts.length - 2]
+                : lastPart;
+
+        if (fromService == null) {
+            log.debug("URL does not contain a monitored service. Bypassing protocol check.");
+            return next.exchange(request);
+        }
+
+        log.info("Planning protocol transition for {} ---> [{}]", fromService, eventAction);
+
+        Lock lock = lockRegistry.obtain(WorkflowSessionService.STATE_LOCK_KEY);
+        TransitionPlan plan = null;
+        CurrentState preCommitState = null;
+
+        boolean acquired = false;
+        try {
+            acquired = lock.tryLock(WorkflowSessionService.LOCK_WAIT_SECONDS,
+                    TimeUnit.SECONDS);
+            if (!acquired) {
+                return Mono.error(new IllegalStateException("Could not " +
+                        "acquire protocol lock"));
             }
 
-            String[] parts = url.split("/");
-            String lastPart = parts[parts.length - 1];
-
-            String eventAction = lastPart.matches("[0-9]+")
-                    ? parts[parts.length - 2]
-                    : lastPart;
-
-            if (fromService == null) {
-                log.debug("URL does not contain a monitored service. Bypassing protocol check.");
-                return next.exchange(request);
+            // Try to plan; if no valid transition, fall through to send the request
+            // without protocol enforcement.
+            try {
+                plan = managerService.planEvent(fromService, eventAction);
+            } catch (RuntimeException e) {
+                log.debug("No protocol transition for {} + {} at current "+
+                                "state — passing through",
+                        fromService, eventAction);
             }
 
-            // Define the Event
-            log.info("Attempting protocol transition for {} ---> [{}]", fromService, eventAction);
+            if (plan != null) {
+                // Snapshot pre-commit state for non-workflow transitions only.
+                // Workflow starts use the session snapshot mechanism.
+                if (!plan.isStartsWorkflow()) {
+                    preCommitState = currentStateRepository
+                            .findById(ProtocolInterpreter.CURRENT_STATE_ID)
+                            .orElse(null);
+                }
 
-            // Call the service that handles locking, checking validity, and updating state
-            // in Redis.
-            String nextState = managerService.processEvent(fromService, eventAction);
-            log.info("Protocol transition verified and state updated to: {}", nextState);
+                if (plan.isStartsWorkflow()) {
+                    Session session = sessionService.onWorkflowStart(
+                            UUID.randomUUID().toString(),
+                            plan.getTransition().getWorkflow(),
+                            plan.getWorkflowToStart(),
+                            plan.getTransition().isRollbackOnFailure());
+                    plan.setSessionId(session.getSessionId());
+                    plan.setWorkflowId(plan.getTransition().getWorkflow());
+                }
 
-            ClientRequest newRequest;
-            if (WorkflowSessionService.getSessionId() != null) {
-                newRequest = ClientRequest.from(request)
-                        .attribute("mpst.sessionId", WorkflowSessionService.getSessionId())
-                        .attribute("mpst.workflowId", WorkflowSessionService.getWorkflowId())
-                        .attribute("mpst.rollbackOnFailure", WorkflowSessionService.isRollbackOnFailure())
-                        .build();
-            } else {
-                newRequest = ClientRequest.from(request)
-                        .build();
+                interpreter.commitTransition(plan);
             }
 
-            return next.exchange(newRequest);
-        });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Mono.error(e);
+        } finally {
+            if (acquired) lock.unlock();
+        }
+
+        // Build outgoing request, tagging it with whatever rollback info is relevant.
+        ClientRequest.Builder builder = ClientRequest.from(request);
+        if (plan != null) {
+            builder.attribute("mpst.plan", plan)
+                    .attribute("mpst.rollbackOnFailure", plan.getTransition().isRollbackOnFailure());
+            if (plan.getSessionId() != null) {
+                builder.attribute("mpst.sessionId", plan.getSessionId());
+                builder.attribute("mpst.workflowId", plan.getWorkflowId());
+            }
+            if (preCommitState != null) {
+                builder.attribute("mpst.preCommitState", preCommitState);
+            }
+        }
+
+        return next.exchange(builder.build());
     }
+
+//        // NEW: create session + snapshot if needed, then commit immediately
+//        if (plan.isStartsWorkflow()) {
+//            Session session = sessionService.onWorkflowStart(
+//                    UUID.randomUUID().toString(),
+//                    plan.getTransition().getWorkflow(),
+//                    plan.getWorkflowToStart(),
+//                    plan.getTransition().isRollbackOnFailure());
+//            plan.setSessionId(session.getSessionId());
+//            plan.setWorkflowId(plan.getTransition().getWorkflow());
+//        }
+//
+//        // Commit BEFORE firing the request — so other services see the new state
+//        interpreter.commitTransition(plan);
+//        log.info("Transition committed: state is now {}", plan.getNextState().getName());
+//
+//        // Tag the request and fire
+//        ClientRequest.Builder builder = ClientRequest.from(request)
+//                .attribute("mpst.plan", plan)
+//                .attribute("mpst.rollbackOnFailure", plan.getTransition().isRollbackOnFailure());
+//        if (plan.getSessionId() != null) {
+//            builder.attribute("mpst.sessionId", plan.getSessionId());
+//            builder.attribute("mpst.workflowId", plan.getWorkflowId());
+//        }
+//
+//        return next.exchange(builder.build());
+//    }
+
+
+//        // PLAN ONLY — don't persist yet
+//        TransitionPlan plan;
+//        try {
+//            plan = interpreter.planTransition(fromService, eventAction);
+//        } catch (InvalidTransitionException e) {
+//            // Invalid transition — reject without even firing the request
+//            return Mono.error(e);
+//        }
+//
+//        log.info("Transition planned: next state will be {}", plan.getNextState().getName());
+//
+//        // If this plan starts a workflow, we DO want the session created up front
+//        // because the snapshot must exist before the request in case we need to roll back.
+//        if (plan.isStartsWorkflow()) {
+//            // New workflow: create the session and snapshot now
+//            Session session = sessionService.onWorkflowStart(
+//                    UUID.randomUUID().toString(),
+//                    plan.getTransition().getWorkflow(),
+//                    plan.getWorkflowToStart(),
+//                    plan.getTransition().isRollbackOnFailure());
+//            plan.setSessionId(session.getSessionId());
+//            plan.setWorkflowId(plan.getTransition().getWorkflow());
+//        } else if (plan.isInsideWorkflow()) {
+//            // Existing workflow: find the active session so rollback can reach it
+//            CurrentWorkflow active = currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).orElse(null);
+//            if (active != null && active.getSessionId() != null) {
+//                plan.setSessionId(active.getSessionId());
+//                plan.setWorkflowId(active.getWorkflow().getName());
+//            }
+//        }
+//
+//        // Tag the request with the plan so the response filter can commit or rollback
+//        ClientRequest.Builder builder = ClientRequest.from(request)
+//                .attribute("mpst.plan", plan)
+//                .attribute("mpst.rollbackOnFailure", plan.getTransition().isRollbackOnFailure());
+//
+//        if (plan.getSessionId() != null) {
+//            builder.attribute("mpst.sessionId", plan.getSessionId());
+//            builder.attribute("mpst.workflowId", plan.getWorkflowId());
+//        }
+//
+//        return next.exchange(builder.build());
+//    }
 
     /**
      * Extract service name simply by URL pattern matching

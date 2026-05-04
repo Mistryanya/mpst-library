@@ -4,7 +4,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.example.mpstlibrary.data.CurrentState;
 import org.example.mpstlibrary.data.Protocol;
 import org.example.mpstlibrary.data.State;
-import org.example.mpstlibrary.exception.InvalidProtocolException;
 import org.example.mpstlibrary.repo.CurrentStateRepository;
 import org.example.mpstlibrary.repo.ProtocolRepository;
 import org.springframework.beans.factory.annotation.Autowired;

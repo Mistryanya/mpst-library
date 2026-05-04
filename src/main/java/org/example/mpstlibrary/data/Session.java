@@ -5,7 +5,6 @@ import lombok.Data;
 import java.io.Serializable;
 import java.util.Map;
 
-import org.example.mpstlibrary.session.Snapshot;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.redis.core.RedisHash;
 import org.springframework.data.redis.core.TimeToLive;
