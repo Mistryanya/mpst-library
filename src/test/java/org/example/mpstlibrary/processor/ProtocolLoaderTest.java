@@ -43,14 +43,14 @@ public class ProtocolLoaderTest {
     // check the actual JSON file is validated correctly through logging
     @Test
     void testLoadProtocol() throws IOException {
-        String path = "/protocol-examples/example1.json";
+        String path = "/protocol-examples/protocol.json";
         protocolLoader.loadAndSaveProtocol(path, "test");
     }
 
     // test current state save
     @Test
     void testInitialCurrentStateLoadedCorrectly() throws IOException {
-        String path = "/protocol-examples/example1.json";
+        String path = "/protocol-examples/protocol.json";
         protocolLoader.loadAndSaveProtocol(path, "test_currentState");
         Mockito.verify(repo).save(any(CurrentState.class));
     }

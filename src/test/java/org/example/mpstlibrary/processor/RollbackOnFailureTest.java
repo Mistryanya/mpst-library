@@ -92,6 +92,34 @@ public class RollbackOnFailureTest {
      */
 
     @Test
+    public void testService3CanBeCalledExactlyThreeTimesA() {
+        // Call 1: outer succeeds at HTTP level, but inner workflow fails
+        // → rollback restores state to S0 as if the whole thing never happened
+        ResponseEntity<String> call1 = service3CallService1();
+        Assertions.assertEquals(HttpStatus.OK, call1.getStatusCode());
+        workflowFail();   // call_method_a → 400 → rollback to S0
+
+        // Call 2: outer succeeds, inner workflow succeeds, state moves S0 → S1
+        ResponseEntity<String> call2 = service3CallService1();
+        Assertions.assertEquals(HttpStatus.OK, call2.getStatusCode());
+        workflowPass();
+
+        // Call 3: outer succeeds, inner workflow succeeds, state moves S1 → S2 (end+restart)
+        ResponseEntity<String> call3 = service3CallService1();
+        Assertions.assertEquals(HttpStatus.OK, call3.getStatusCode());
+        workflowPass();
+
+        // Call 4: outer succeeds, S2 → S3, no workflow on this transition
+        ResponseEntity<String> call4 = service3CallService1();
+        Assertions.assertEquals(HttpStatus.OK, call4.getStatusCode());
+
+        server.verify(4, postRequestedFor(urlEqualTo("/api/service3/fetchStatusService1")));
+        server.verify(1, getRequestedFor(urlEqualTo("/api/service3/call_method_a")));
+        server.verify(2, getRequestedFor(urlEqualTo("/api/service3/call_method_x")));
+        server.verify(2, getRequestedFor(urlEqualTo("/api/service3/call_method_y")));
+    }
+
+    @Test
     public void testService3CanBeCalledExactlyThreeTimes(){
 
         ResponseEntity<String> call1 = service3CallService1_400();
@@ -121,6 +149,28 @@ public class RollbackOnFailureTest {
         server.verify(2, getRequestedFor(urlEqualTo("/api/service3/call_method_a")));
         server.verify(3, getRequestedFor(urlEqualTo("/api/service3/call_method_y")));
 
+    }
+
+    @Test
+    public void testWorkflowRollbackOnInternalFailure() {
+        // Step 1: start the workflow successfully
+        ResponseEntity<String> call1 = service3CallService1();
+        Assertions.assertEquals(HttpStatus.OK, call1.getStatusCode());
+        // Protocol state is now at W0 (inside workflow)
+
+        // Step 2: fire a workflow-internal request that fails
+        // This is call_method_a, which is valid at W0 and returns 400 per your stub
+        ResponseEntity<String> failedCall = call_method_a();
+        Assertions.assertEquals(HttpStatus.BAD_REQUEST, failedCall.getStatusCode());
+        // Rollback fires here: workflow is torn down, protocol snaps back to S0
+
+        // Step 3: prove the rollback worked by successfully starting the workflow again
+        ResponseEntity<String> retry = service3CallService1();
+        Assertions.assertEquals(HttpStatus.OK, retry.getStatusCode());
+        workflowPass();
+        // If rollback hadn't worked, call1 would have left us at W0 and
+        // service3CallService1 would fail at plan time (S0's transition
+        // doesn't exist from W0).
     }
 
 
@@ -205,7 +255,7 @@ public class RollbackOnFailureTest {
     public ResponseEntity<String> service3CallService1_400(){
         Mono<ResponseEntity<String>> retrieveResponse =
                 webClientMonitor.monitoredWebClient()
-                        .get()
+                        .post()
                         .uri(HOST + "/api/service3/fetchStatusService1")
                         .header("X-Test-Case", "fail")
                         .retrieve()

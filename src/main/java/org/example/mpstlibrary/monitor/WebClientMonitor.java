@@ -5,6 +5,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.example.mpstlibrary.data.CurrentState;
 import org.example.mpstlibrary.data.Session;
 import org.example.mpstlibrary.data.TransitionPlan;
+import org.example.mpstlibrary.exception.EndOfProtocolException;
+import org.example.mpstlibrary.exception.InvalidTransitionException;
+import org.example.mpstlibrary.exception.StateMismatchException;
 import org.example.mpstlibrary.processor.ProtocolInterpreter;
 import org.example.mpstlibrary.processor.ProtocolManagerService;
 import org.example.mpstlibrary.repo.CurrentStateRepository;
@@ -102,8 +105,16 @@ public class WebClientMonitor {
             try {
                 plan = managerService.planEvent(fromService, eventAction);
             } catch (RuntimeException e) {
-                log.debug("No protocol transition for {} + {} at current "+
-                                "state — passing through",
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+
+                if (cause instanceof EndOfProtocolException ||
+                        cause instanceof StateMismatchException ||
+                        cause instanceof InvalidTransitionException) {
+                    log.warn("Protocol violation blocked: {}", cause.getMessage());
+                    return Mono.error(cause);
+                }
+
+                log.debug("No protocol transition for {} + {} at current state — passing through",
                         fromService, eventAction);
             }
 

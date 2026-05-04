@@ -44,7 +44,7 @@ reset current state repo between each test back to state s0.
 @SpringBootTest
 @Execution(ExecutionMode.SAME_THREAD)
 @TestPropertySource(properties = {
-        "protocolPath=protocol-examples/example3.json"
+        "protocolPath=protocol-examples/protocol.json"
 })
 public class ProtocolTest {
 

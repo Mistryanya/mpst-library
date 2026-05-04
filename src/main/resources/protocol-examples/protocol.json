@@ -1,0 +1,62 @@
+{
+
+  "states": [
+    {
+      "name": "S0",
+      "start": true,
+      "transitions": [
+        {"from": "Service3", "on": "fetchStatusService1", "to": "S1", "workflow": "fetchData_workflow"},
+        {"from": "Service3", "on": "fetchStatusService2", "to": "S2"},
+        {"from": "Service2", "on": "fetchStatus", "to": "S0"}
+      ]
+    },
+    {
+      "name": "S1",
+      "transitions": [
+        {"from": "Service3", "on": "fetchStatusService1", "to": "S2", "workflow": "fetchData_workflow"}
+      ]
+    },
+    {
+      "name": "S2",
+      "transitions": [
+        { "from": "Service2", "on": "fetchStatus", "to": "S3" },
+        { "from": "Service3", "on": "fetchStatusService1", "to": "S3" }
+      ]
+    },
+    {
+      "name": "S3",
+      "end": true
+    }
+  ],
+
+  "workflows":  [
+    { "name": "fetchData_workflow",
+      "description": "Internal API calls made during Service3.fetchData",
+      "owner": "Service3",
+      "states": [
+        {
+          "name": "W0",
+          "start": true,
+          "transitions": [
+            {"from": "Service3", "on": "call_method_x", "to": "W1"},
+            {"from": "Service3", "on": "call_method_a", "to": "W_end"}
+          ]
+        },
+        {
+          "name": "W1",
+          "transitions": [
+            {"from": "Service3", "on": "call_method_y", "to": "W_end"}
+          ]
+        },
+        {
+          "name": "W_end",
+          "end": true
+        }
+      ]
+    }
+  ]
+}
+
+
+
+

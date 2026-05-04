@@ -1,0 +1,94 @@
+{
+  "mappings": [
+
+    {
+      "request": {
+        "method": "POST",
+        "url": "/api/service2/fetchStatus"
+      },
+
+      "response": {
+        "status": 200,
+        "fixedDelayMilliseconds": 10
+
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "/api/service3/fetchStatusService1"
+      },
+
+      "response": {
+        "status": 200,
+        "fixedDelayMilliseconds": 10
+
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "headers": {
+          "X-Test-Case": {
+            "equalTo": "fail"
+          }
+        },
+        "url": "/api/service3/fetchStatusService1"
+      },
+
+      "response": {
+        "status": 400,
+        "fixedDelayMilliseconds": 10
+
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "url": "/api/service3/fetchStatusService2"
+      },
+
+      "response": {
+        "status": 200,
+        "fixedDelayMilliseconds": 10
+
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/api/service3/call_method_x"
+      },
+
+      "response": {
+        "status": 200,
+        "fixedDelayMilliseconds": 10
+
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/api/service3/call_method_a"
+      },
+
+      "response": {
+        "status": 400,
+        "fixedDelayMilliseconds": 10
+
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "url": "/api/service3/call_method_y"
+      },
+
+      "response": {
+        "status": 200,
+        "fixedDelayMilliseconds": 10
+
+      }
+    }
+  ]
+}
