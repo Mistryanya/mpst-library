@@ -1,0 +1,31 @@
+{
+
+  "states": [
+    {
+      "name": "S0",
+      "start": true,
+      "transitions": [
+        {"from": "Service3", "on": "fetchStatusService1", "to": "S1"},
+        {"from": "Service3", "on": "fetchStatusService2", "to": "S2"},
+        {"from": "Service2", "on": "fetchStatus", "to": "S0"}
+      ]
+    },
+    {
+      "name": "S1",
+      "transitions": [
+        {"from": "Service3", "on": "fetchStatusService1", "to": "S2"}
+      ]
+    },
+    {
+      "name": "S2",
+      "transitions": [
+        { "from": "Service2", "on": "fetchStatus", "to": "S3" },
+        { "from": "Service3", "on": "fetchStatusService1", "to": "S3" }
+      ]
+    },
+    {
+      "name": "S3",
+      "end": true
+    }
+  ]
+}
