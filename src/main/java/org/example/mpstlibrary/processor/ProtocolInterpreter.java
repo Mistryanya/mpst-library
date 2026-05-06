@@ -40,6 +40,7 @@ public class ProtocolInterpreter {
     public final static String CURRENT_STATE_ID = "current_state";
     public final static String CURRENT_WORKFLOW_ID = "workflow";
     public final static String CURRENT_WORKFLOW_STATE_ID = "workflow_state";
+    public final static String PRE_COMMIT_STATE_ID = "pre_commit_state";
 
     // ---------- Reads ----------
 

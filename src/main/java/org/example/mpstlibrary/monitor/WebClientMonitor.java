@@ -74,7 +74,11 @@ public class WebClientMonitor {
                 ? extractFromServiceFromUrl(url)
                 : serviceName;
 
-        String[] parts = url.split("/");
+        String path = request.url().getPath();
+        log.info("path : {}", path);
+        log.info("url : {}", url);
+
+        String[] parts = path.split("/");
         String lastPart = parts[parts.length - 1];
         String eventAction = lastPart.matches("[0-9]+")
                 ? parts[parts.length - 2]
@@ -164,81 +168,10 @@ public class WebClientMonitor {
         return next.exchange(builder.build());
     }
 
-//        // NEW: create session + snapshot if needed, then commit immediately
-//        if (plan.isStartsWorkflow()) {
-//            Session session = sessionService.onWorkflowStart(
-//                    UUID.randomUUID().toString(),
-//                    plan.getTransition().getWorkflow(),
-//                    plan.getWorkflowToStart(),
-//                    plan.getTransition().isRollbackOnFailure());
-//            plan.setSessionId(session.getSessionId());
-//            plan.setWorkflowId(plan.getTransition().getWorkflow());
-//        }
-//
-//        // Commit BEFORE firing the request — so other services see the new state
-//        interpreter.commitTransition(plan);
-//        log.info("Transition committed: state is now {}", plan.getNextState().getName());
-//
-//        // Tag the request and fire
-//        ClientRequest.Builder builder = ClientRequest.from(request)
-//                .attribute("mpst.plan", plan)
-//                .attribute("mpst.rollbackOnFailure", plan.getTransition().isRollbackOnFailure());
-//        if (plan.getSessionId() != null) {
-//            builder.attribute("mpst.sessionId", plan.getSessionId());
-//            builder.attribute("mpst.workflowId", plan.getWorkflowId());
-//        }
-//
-//        return next.exchange(builder.build());
-//    }
-
-
-//        // PLAN ONLY — don't persist yet
-//        TransitionPlan plan;
-//        try {
-//            plan = interpreter.planTransition(fromService, eventAction);
-//        } catch (InvalidTransitionException e) {
-//            // Invalid transition — reject without even firing the request
-//            return Mono.error(e);
-//        }
-//
-//        log.info("Transition planned: next state will be {}", plan.getNextState().getName());
-//
-//        // If this plan starts a workflow, we DO want the session created up front
-//        // because the snapshot must exist before the request in case we need to roll back.
-//        if (plan.isStartsWorkflow()) {
-//            // New workflow: create the session and snapshot now
-//            Session session = sessionService.onWorkflowStart(
-//                    UUID.randomUUID().toString(),
-//                    plan.getTransition().getWorkflow(),
-//                    plan.getWorkflowToStart(),
-//                    plan.getTransition().isRollbackOnFailure());
-//            plan.setSessionId(session.getSessionId());
-//            plan.setWorkflowId(plan.getTransition().getWorkflow());
-//        } else if (plan.isInsideWorkflow()) {
-//            // Existing workflow: find the active session so rollback can reach it
-//            CurrentWorkflow active = currentWorkflowRepository.findById(CURRENT_WORKFLOW_ID).orElse(null);
-//            if (active != null && active.getSessionId() != null) {
-//                plan.setSessionId(active.getSessionId());
-//                plan.setWorkflowId(active.getWorkflow().getName());
-//            }
-//        }
-//
-//        // Tag the request with the plan so the response filter can commit or rollback
-//        ClientRequest.Builder builder = ClientRequest.from(request)
-//                .attribute("mpst.plan", plan)
-//                .attribute("mpst.rollbackOnFailure", plan.getTransition().isRollbackOnFailure());
-//
-//        if (plan.getSessionId() != null) {
-//            builder.attribute("mpst.sessionId", plan.getSessionId());
-//            builder.attribute("mpst.workflowId", plan.getWorkflowId());
-//        }
-//
-//        return next.exchange(builder.build());
-//    }
-
     /**
      * Extract service name simply by URL pattern matching
-     * NOTE: This should ideally use a proper service discovery mechanism.
+     * NOTE: This is just for testing services
+     * Banking services all have application.name property while running
      */
     // TODO After workflows successfully implemented -- please add service list and then check against that
     private String extractFromServiceFromUrl(String url) {

@@ -22,6 +22,7 @@ import jakarta.servlet.Filter;
 
 import static jakarta.servlet.http.HttpServletResponse.SC_BAD_REQUEST;
 import static org.example.mpstlibrary.processor.ProtocolInterpreter.CURRENT_STATE_ID;
+import static org.example.mpstlibrary.processor.ProtocolInterpreter.PRE_COMMIT_STATE_ID;
 
 @Component
 @RequiredArgsConstructor
@@ -37,21 +38,18 @@ public class RequestLoggingFilter implements Filter {
     @Autowired
     private WorkflowSessionService sessionService;
 
+
+    /*
+    TODO | REFACTOR CODE
+    1. MAKE requests set a pre commit state INSIDE the currentStateRepository NOT INCLUDING workflow states
+     */
+
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws ServletException, IOException {
         HttpServletRequest httpRequest = (HttpServletRequest) request;
         HttpServletResponse httpResponse = (HttpServletResponse) response;
 
         String uri = httpRequest.getRequestURI();
         log.info("Incoming request: {}", uri);
-
-//        String callingService = httpRequest.getHeader("X-Calling-Service");
-//        if (callingService == null) {
-//            log.info("External traffic, no protocol enforcement");
-//            // External traffic, no protocol enforcement
-//            chain.doFilter(request, response);
-//            return;
-//        }
-
 
         // Inter-service call: this receiver should advance the protocol on its own behalf
         String thisService = extractFromServiceFromUrl(uri);  // "authorisation-service"
@@ -62,27 +60,35 @@ public class RequestLoggingFilter implements Filter {
                 : lastPart;
 
         TransitionPlan plan = null;
-        CurrentState preCommitState = null;   // ← snapshot for rollback
+
+        CurrentState preCommitState = currentStateRepository
+                .findById(PRE_COMMIT_STATE_ID)
+                .orElse(null);
+
+        if (preCommitState == null){
+            log.info("preCommit state was null setting to current state");
+            if (currentStateRepository.findById(CURRENT_STATE_ID).isPresent()) {
+                currentStateRepository.save(new CurrentState(currentStateRepository.findById(CURRENT_STATE_ID).get().getState(), PRE_COMMIT_STATE_ID));
+            }
+            preCommitState = currentStateRepository
+                    .findById(PRE_COMMIT_STATE_ID)
+                    .orElse(null);
+        }
 
         try {
             plan = managerService.planEvent(thisService, eventAction);
             log.info("Planned inbound transition: {} + {}", thisService, eventAction);
         } catch (RuntimeException e) {
-            log.debug("No protocol transition for {} + {} — passing through",
+            log.info("No protocol transition for {} + {} — passing through",
                     thisService, eventAction);
         }
 
         if (plan != null) {
-            // Snapshot pre-commit state for non-workflow transitions only.
-            // Workflow starts use the session snapshot mechanism.
-            if (!plan.isStartsWorkflow()) {
-                preCommitState = currentStateRepository
-                        .findById(CURRENT_STATE_ID)
-                        .orElse(null);
-            }
             managerService.commitEvent(plan);
             log.info("Committed inbound transition for {} + {}", thisService, eventAction);
         }
+
+        log.info("PreCommit state: {}", preCommitState.toString());
 
         chain.doFilter(request, response);
 
@@ -104,137 +110,14 @@ public class RequestLoggingFilter implements Filter {
                 currentStateRepository.save(preCommitState);
             }
         }
-
-
-        //////////////////// WORKS WITHOUT ROLLBACK
-//
-//        TransitionPlan plan = null;
-//        try {
-//            plan = managerService.planEvent(thisService, eventAction);
-//            log.info("Planned inbound transition: {} + {}", thisService, eventAction);
-//        } catch (RuntimeException e) {
-//            log.debug("No protocol transition for {} + {} at current state — passing through",
-//                    thisService, eventAction);
-//        }
-//
-//        // COMMIT HERE — before the chain runs
-//        if (plan != null) {
-//            managerService.commitEvent(plan);
-//            log.info("Committed inbound transition for {} + {}", thisService, eventAction);
-//        }
-//
-//        chain.doFilter(request, response);
-
-        //////////////// works with rollback but not normally
-//
-//        TransitionPlan plan;
-//        try {
-//            plan = managerService.planEvent(thisService, eventAction);
-//            log.info("Planned inbound transition: {} + {}", thisService, eventAction);
-//        } catch (RuntimeException e) {
-//            log.debug("No protocol transition for {} + {} at current state — passing through", thisService, eventAction);
-//                    httpResponse.sendError(SC_BAD_REQUEST, e.getMessage());
-//            return;
-//        }
-//        if (plan != null) {
-//            int status = httpResponse.getStatus();
-//            if (status < 400) {
-//                managerService.commitEvent(plan);
-//                log.info("Committed inbound transition for {} + {}", thisService, eventAction);
-//            } else if (!plan.getTransition().isRollbackOnFailure()) {
-//                managerService.commitEvent(plan);
-//            }
-//
-//            chain.doFilter(request, response);
-//
-//            if (httpResponse.getStatus() < 400) {
-//                managerService.commitEvent(plan);
-//            }
-//        }
     }
 
-//    @Override
-//    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
-//            throws IOException, ServletException {
-//
-//        HttpServletRequest httpRequest = (HttpServletRequest) request;
-//        log.info("Incoming request: {}", httpRequest.getRequestURI());
-//
-//        // The protocol state machine is enforced by WebClientMonitor on outgoing calls.
-//        // Inbound servlet traffic doesn't drive protocol transitions directly — it's
-//        // either external entry, or inter-service traffic whose caller already committed.
-//        chain.doFilter(request, response);
-//    }
-
-//    @Override
-//    public void doFilter(
-//            ServletRequest request,
-//            ServletResponse response,
-//            FilterChain chain
-//    ) throws IOException, ServletException {
-//
-//        HttpServletRequest httpRequest = (HttpServletRequest) request;
-//        HttpServletResponse httpResponse = (HttpServletResponse) response;
-//
-//        // Identify the "calling service" and the method name
-//        // push through into protocol
-//        // make request
-//
-//        log.info("Incoming External request:");
-//        String uri = httpRequest.getRequestURI();
-//
-//        log.info("URI: " + uri);
-//        String fromService = extractFromServiceFromUrl(uri);
-//
-//        String[] parts = uri.split("/");
-//        String lastPart = parts[parts.length - 1];
-//
-//        String eventAction = lastPart.matches("[0-9]+")
-//                ? parts[parts.length - 2]
-//                : lastPart;
-//
-//        log.info("Attempting protocol transition for {} ---> [{}]", fromService,eventAction);
-//
-//        // 1. PLAN — validate the transition, don't persist yet
-//        TransitionPlan plan;
-//        try {
-//            plan = managerService.planEvent(fromService, eventAction);
-//        } catch (RuntimeException e) {
-//            log.warn("Invalid protocol transition for {} -> {}: {}",
-//                    fromService, eventAction, e.getMessage());
-//            httpResponse.sendError(HttpServletResponse.SC_BAD_REQUEST,
-//                    "Invalid protocol transition: " + e.getMessage());
-//            return;
-//        }
-//
-//        // 2. EXECUTE the downstream handler
-//        chain.doFilter(request, response);
-//
-//        // 3. COMMIT or skip based on response status
-//        int status = httpResponse.getStatus();
-//        boolean isFailure = status >= 400;
-//
-//        if (!isFailure) {
-//            log.info("Request succeeded ({}), committing transition to {}",
-//                    status, plan.getNextState().getName());
-//            managerService.commitEvent(plan);
-//        } else {
-//            boolean shouldRollback = plan.getTransition().isRollbackOnFailure();
-//            if (shouldRollback) {
-//                log.warn("Request failed ({}), transition NOT committed — no state change", status);
-//                // Nothing to rollback: we never committed, so there's no prior state to restore.
-//                // (Unlike the WebClient workflow case, inbound requests don't create sessions
-//                // here, so snapshot-based rollback doesn't apply.)
-//            } else {
-//                log.info("Failure status {} tolerated by transition, committing anyway", status);
-//                managerService.commitEvent(plan);
-//            }
-//        }
-//
-//        chain.doFilter(request, response); // continue request
-//    }
-
-        // FOR BANKING SERVICE SPECIFICALLY
+    /**
+     * Extract service name simply by URL pattern matching
+     * NOTE: This should ideally use a proper service discovery mechanism.
+     * I have considered something like a list of services inside the protocol.json that can be iterated through
+     */
+    // TODO After workflows successfully implemented -- please add service list and then check against that
     private String extractFromServiceFromUrl (String url){
         // NOTE: The extracted name MUST match the State name in your Protocol JSON
         // (e.g., "Service2")
@@ -246,6 +129,12 @@ public class RequestLoggingFilter implements Filter {
             return "bank-service";
         if (url.contains("/payment-gateway"))
             return "payment-gateway-service";
+        if (url.contains("/service1"))
+            return "Service1";
+        if (url.contains("/service2"))
+            return "Service2";
+        if (url.contains("/service3"))
+            return "Service3";
         return null;
     }
 

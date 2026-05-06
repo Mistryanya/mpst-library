@@ -2,11 +2,18 @@ package org.example.mpstlibrary.session;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.example.mpstlibrary.data.CurrentState;
 import org.example.mpstlibrary.data.TransitionPlan;
 import org.example.mpstlibrary.processor.ProtocolInterpreter;
+import org.example.mpstlibrary.repo.CurrentStateRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
+
+import static org.example.mpstlibrary.processor.ProtocolInterpreter.*;
 
 @Component
 @RequiredArgsConstructor
@@ -17,14 +24,27 @@ public class RollbackOnFailureFilter {
 
     private final ProtocolInterpreter interpreter;
 
+    @Autowired
+    private CurrentStateRepository currentStateRepository;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
+
     public ExchangeFilterFunction filter() {
         return (request, next) -> next.exchange(request)
+                .publishOn(Schedulers.boundedElastic())
                 .flatMap(response -> {
             int status = response.statusCode().value();
             boolean isFailure = status >= 400;
 
             if (!isFailure) {
                 // State already committed during request phase; nothing to do.
+                if (interpreter.getCurrentWorkflow() == null){
+                    currentStateRepository.deleteById(PRE_COMMIT_STATE_ID);
+                    stringRedisTemplate.delete("currentState:" + PRE_COMMIT_STATE_ID);
+
+                    log.info("removed pre commit state");
+                }
                 return Mono.just(response);
             }
 
@@ -52,58 +72,23 @@ public class RollbackOnFailureFilter {
                 // because no session was created. This is the case where we'd need
                 // to re-snapshot non-workflow transitions, or accept this limitation.
                 log.warn("Request failed ({}), but no snapshot available to roll back", status);
+                log.info("Rolling back to pre-commit state");
+
+                // set pre commit state
+
+                currentStateRepository
+                        .findById(PRE_COMMIT_STATE_ID).ifPresent(pre_commit_State ->
+                                currentStateRepository.save(new CurrentState(pre_commit_State.getState(), CURRENT_STATE_ID)));
+
+
+                currentStateRepository.deleteById(PRE_COMMIT_STATE_ID);
+                stringRedisTemplate.delete("currentState:" + PRE_COMMIT_STATE_ID);
+
+                log.info("removed pre commit state");
+
             }
 
             return Mono.just(response);
         });
-//        return (request, next) -> next.exchange(request)
-//                .flatMap(response -> {
-//                    int status = response.statusCode().value();
-//                    boolean isFailure = status >= 400;
-//
-//                    TransitionPlan plan = (TransitionPlan) request.attributes().get("mpst.plan");
-//                    if (plan == null) {
-//                        // Untracked request — nothing to commit or roll back
-//                        return Mono.just(response);
-//                    }
-//
-//                    boolean shouldRollback = (boolean) request.attributes()
-//                            .getOrDefault("mpst.rollbackOnFailure", true);
-//                    String sessionId = (String) request.attributes().get("mpst.sessionId");
-//                    String workflowId = (String) request.attributes().get("mpst.workflowId");
-//
-//                    if (!isFailure) {
-//                        // SUCCESS — commit the state update now
-//                        log.info("Request succeeded ({}), committing transition to {}",
-//                                status, plan.getNextState().getName());
-//                        interpreter.commitTransition(plan);
-//                        return Mono.just(response);
-//                    }
-//
-//                    if (!shouldRollback) {
-//                        // Failure is tolerated by the transition — commit anyway
-//                        log.info("Failure status {} tolerated by transition, committing anyway", status);
-//                        interpreter.commitTransition(plan);
-//                        return Mono.just(response);
-//                    }
-//
-//                    // Failure + rollback required
-//                    if (sessionId != null && workflowId != null) {
-//                        // Workflow case: restore snapshot
-//                        log.warn("Request failed ({}), rolling back session {} workflow {}",
-//                                status, sessionId, workflowId);
-//                        try {
-//                            sessionService.rollbackToSnapshot(sessionId, workflowId);
-//                        } catch (Exception e) {
-//                            log.error("Rollback failed for session {} workflow {}",
-//                                    sessionId, workflowId, e);
-//                        }
-//                    } else {
-//                        // Non-workflow case: nothing was persisted, so nothing to undo
-//                        log.warn("Request failed ({}), transition not committed — no state change", status);
-//                    }
-//
-//                    return Mono.just(response);
-//                });
     }
 }
