@@ -14,16 +14,18 @@ implementation files('../mpst-library/build/libs/mpst-library-0.0.1-SNAPSHOT-pla
 ```
 
 ## **PLEASE NOTE:** 
-The default protocol loaded into the library is for the banking-mircroservices, to change for the testing services you MUST update application.properties value:
+The default protocol loaded into the library is for the banking-mircroservices, to change for the testing services you MUST update ProtocolInitializer.java variable:
 
-``` 
-protocolPath="protocol-examples/banking_protocol.json"
+```java
+@Value("${protocolPath:protocol-examples/banking_protocol.json}")
+private String protocolPath;
 ```
 
 to be 
 
-``` 
-protocolPath="protocol-examples/example_protocol.json"
+```java
+@Value("${protocolPath:protocol-examples/example_protocol.json}")
+private String protocolPath;
 ```
 
 
@@ -39,6 +41,15 @@ In order for the mspt-library to load the protocol you need to have a Redis serv
 
 * **STEP 1:** [Download Redis (https://redis.io/docs/latest/operate/oss_and_stack/install/archive/install-redis/)]
 * **STEP 2:** Make sure Redis server is running on port **6379**
+
+### **Redis NOTE:** 
+
+Redis needs to be cleared in order to restart the protocol and when you swicth the .json file being used 
+
+```ubuntu
+redis-cli FLUSHALL
+```
+
 
 
 ## How to run a microservice architecture WITH the mpst-library locally
