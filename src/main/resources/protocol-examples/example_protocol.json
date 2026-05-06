@@ -5,27 +5,77 @@
       "name": "S0",
       "start": true,
       "transitions": [
-        {"from": "Service3", "on": "fetchStatusService1", "to": "S1"},
-        {"from": "Service3", "on": "fetchStatusService2", "to": "S2"},
-        {"from": "Service2", "on": "fetchStatus", "to": "S0"}
+        {"from": "Service3", "on": "fetchStatusService1", "to": "S1", "workflow":  "fetchStatusService1"},
+        {"from": "Service3", "on": "fetchStatusService2", "to": "S2", "workflow":  "fetchStatusService2"},
+        {"from": "Service2", "on": "fetchStatus", "to": "S0", "workflow":  "fetchStatus"}
       ]
     },
     {
       "name": "S1",
       "transitions": [
-        {"from": "Service3", "on": "fetchStatusService1", "to": "S2"}
+        {"from": "Service3", "on": "fetchStatusService1", "to": "S2", "workflow":  "fetchStatusService1"}
       ]
     },
     {
       "name": "S2",
       "transitions": [
-        { "from": "Service2", "on": "fetchStatus", "to": "S3" },
-        { "from": "Service3", "on": "fetchStatusService1", "to": "S3" }
+        { "from": "Service2", "on": "fetchStatus", "to": "S3", "workflow":  "fetchStatus"},
+        { "from": "Service3", "on": "fetchStatusService1", "to": "S3", "workflow":  "fetchStatusService1"}
       ]
     },
     {
       "name": "S3",
       "end": true
+    }
+  ],
+  "workflows":  [
+    { "name": "fetchStatusService1",
+      "owner": "Service3",
+      "states": [
+        {
+          "name": "W0",
+          "start": true,
+          "transitions": [
+            {"from": "Service3", "on": "status", "to": "W_end"}
+          ]
+        },
+        {
+          "name": "W_end",
+          "end": true
+        }
+      ]
+    },
+    { "name": "fetchStatusService2",
+      "owner": "Service3",
+      "states": [
+        {
+          "name": "W0",
+          "start": true,
+          "transitions": [
+            {"from": "Service3", "on": "status", "to": "W_end"}
+          ]
+        },
+        {
+          "name": "W_end",
+          "end": true
+        }
+      ]
+    },
+    { "name": "fetchStatus",
+      "owner": "Service2",
+      "states": [
+        {
+          "name": "W0",
+          "start": true,
+          "transitions": [
+            {"from": "Service2", "on": "status", "to": "W_end"}
+          ]
+        },
+        {
+          "name": "W_end",
+          "end": true
+        }
+      ]
     }
   ]
 }

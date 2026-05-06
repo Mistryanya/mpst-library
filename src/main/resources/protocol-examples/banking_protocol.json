@@ -5,23 +5,23 @@
       "start": true,
       "transitions": [
         { "from": "user-service", "on": "login", "to": "S1", "workflow": "login_workflow"},
-        { "from": "user-service", "on": "addNewUser", "to": "S1", "workflow": "newUser_workflow"},
+        { "from": "user-service", "on": "register", "to": "S1", "workflow": "newUser_workflow"},
         { "from": "user-service", "on": "shutdown", "to": "S3", "workflow": "shutdown_workflow"}
       ]
     },
     {
       "name": "S1",
       "transitions": [
-        { "from": "bank-service", "on": "getAllAccounts", "to": "S1" , "workflow": "getAccounts_workflow", "rollbackOnFailure": false},
-        { "from": "bank-service", "on": "accountDetails", "to": "S2" , "workflow": "getAccounts_workflow"},
+        { "from": "bank-service", "on": "getAllAccounts", "to": "S1" , "workflow": "getAllAccounts_workflow", "rollbackOnFailure": false},
+        { "from": "bank-service", "on": "accountDetails", "to": "S2" , "workflow": "getAccount_workflow"},
         { "from": "user-service", "on": "shutdown", "to": "S3", "workflow": "shutdown_workflow"}
       ]
     },
     {
       "name": "S2",
       "transitions": [
-        { "from": "payment-gateway-service", "on": "depositMoney", "to": "S1", "workflow": "depositMoney_makePayment_workflow" },
-        { "from": "payment-gateway-service", "on": "makePayment", "to": "S1", "workflow": "depositMoney_makePayment_workflow "}
+        { "from": "payment-gateway-service", "on": "depositMoney", "to": "S1", "workflow": "depositMoney_makePayment_workflow"},
+        { "from": "payment-gateway-service", "on": "makePayment", "to": "S1", "workflow": "depositMoney_makePayment_workflow"}
       ]
     },
     {
@@ -132,13 +132,13 @@
         {
           "name": "W2",
           "transitions": [
-            {"from": "payment-gateway-service", "on": "updateBalance", "to": "W3"}
+            {"from": "payment-gateway-service", "on": "accountDetails", "to": "W3"}
           ]
         },
         {
           "name": "W3",
           "transitions": [
-            {"from": "bank-service", "on": "updateBalance", "to": "W4"}
+            {"from": "bank-service", "on": "accountDetails", "to": "W4"}
           ]
         },
         {
@@ -156,13 +156,13 @@
         {
           "name": "W6",
           "transitions": [
-            {"from": "payment-gateway-service", "on": "accountDetails", "to": "W7"}
+            {"from": "payment-gateway-service", "on": "updateBalance", "to": "W7"}
           ]
         },
         {
           "name": "W7",
           "transitions": [
-            {"from": "bank-service", "on": "accountDetails", "to": "W8"}
+            {"from": "bank-service", "on": "updateBalance", "to": "W8"}
           ]
         },
         {
@@ -191,7 +191,7 @@
           "name": "W0",
           "start": true,
           "transitions": [
-            {"from": "bank-service", "on": "validateToken", "to": "W2"}
+            {"from": "bank-service", "on": "validateToken", "to": "W1"}
           ]
         },
         {
@@ -218,7 +218,7 @@
         }
       ]
     },
-    { "name": "getAccounts_workflow",
+    { "name": "getAccount_workflow",
       "description": "Get ONE Account Workflow [bank-service --> authorisation-service] ",
       "owner": "bank-service",
       "states": [
@@ -232,19 +232,7 @@
         {
           "name": "W1",
           "transitions": [
-            {"from": "authorisation-service", "on": "validateToken", "to": "W2"}
-          ]
-        },
-        {
-          "name": "W2",
-          "transitions": [
-            {"from": "bank-service", "on": "getUserFromToken", "to": "W3"}
-          ]
-        },
-        {
-          "name": "W3",
-          "transitions": [
-            {"from": "authorisation-service", "on": "getUserFromToken", "to": "W_end"}
+            {"from": "authorisation-service", "on": "validateToken", "to": "W_end"}
           ]
         },
         {
